@@ -14,3 +14,7 @@ snapshot-*.csv
 data-prevista-*.csv
 audit-consegnati-*.csv
 consegnati-sospetti-*.csv
+
+# Materiale di lavoro che non appartiene al repository.
+_to_delete/
+Claude outputs/
