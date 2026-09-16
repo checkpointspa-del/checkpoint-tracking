@@ -1,0 +1,39 @@
+{
+  "name": "checkpoint-tracking",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sincronizzazione stato spedizione ShippyPro -> Shopify + pagina tracking cliente",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:permessi": "node scripts/test-permessi.mjs",
+    "test:tag": "node scripts/test-tags.mjs",
+    "test:env": "node scripts/test-env.mjs",
+    "link": "node scripts/link.mjs",
+    "marketplaces": "node scripts/marketplaces.mjs",
+    "probe": "node scripts/probe.mjs",
+    "probe:delayed": "node scripts/probe-delayed.mjs",
+    "webhooks": "node scripts/setup-webhooks.mjs",
+    "webhooks:apply": "node scripts/setup-webhooks.mjs --apply",
+    "webhooks:remove": "node scripts/setup-webhooks.mjs --remove",
+    "audit": "node scripts/audit-consegnati.mjs",
+    "audit:veloce": "node scripts/audit-consegnati.mjs --solo-shopify",
+    "ripara-consegnati": "node scripts/ripara-consegnati.mjs",
+    "ripara-consegnati:apply": "node scripts/ripara-consegnati.mjs --apply",
+    "backfill": "node scripts/backfill.mjs",
+    "backfill:apply": "node scripts/backfill.mjs --apply",
+    "ripara": "node scripts/ripara.mjs",
+    "ripara:apply": "node scripts/ripara.mjs --apply",
+    "riallinea-tag": "node scripts/riallinea-tag.mjs",
+    "riallinea-tag:apply": "node scripts/riallinea-tag.mjs --apply",
+    "snapshot": "node scripts/snapshot.mjs",
+    "snapshot:apply": "node scripts/snapshot.mjs --apply",
+    "data-prevista": "node scripts/data-prevista.mjs",
+    "data-prevista:apply": "node scripts/data-prevista.mjs --apply",
+    "urls": "node scripts/rewrite-urls.mjs",
+    "urls:apply": "node scripts/rewrite-urls.mjs --apply"
+  },
+  "dependencies": {}
+}

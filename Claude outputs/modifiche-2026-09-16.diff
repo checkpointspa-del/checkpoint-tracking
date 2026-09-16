@@ -1,0 +1,376 @@
+Modifiche checkpoint-tracking — 16 settembre 2026
+=================================================
+
+--- a/lib/orders.js
++++ b/lib/orders.js
+@@ -103,9 +103,6 @@
+ export function shouldWriteEvent(fulfillment, nextStatus, happenedAt) {
+   if (!nextStatus) return { write: false, reason: 'stato non mappato' };
+ 
+-  if (fulfillment.displayStatus === 'DELIVERED') {
+-    return { write: false, reason: 'spedizione già consegnata, stato terminale' };
+-  }
+   if (fulfillment.status === 'CANCELLED') {
+     return { write: false, reason: 'fulfillment annullato' };
+   }
+@@ -116,11 +113,34 @@
+   if (last.status === nextStatus) {
+     return { write: false, reason: 'stato identico al precedente' };
+   }
++
++  // Ordine temporale: un evento piu' vecchio dell'ultimo registrato non entra
++  // mai. E' questa la protezione contro i webhook fuori sequenza, non il
++  // blocco sullo stato terminale: DHL manda regolarmente un IN_TRANSIT delle
++  // 06:56 dopo il DELIVERED delle 07:54, e viene scartato qui.
+   if (happenedAt && last.happenedAt && new Date(happenedAt) <= new Date(last.happenedAt)) {
+     return { write: false, reason: 'evento più vecchio dell\'ultimo registrato' };
+   }
++
++  // CONSEGNA RITRATTATA DAL VETTORE.
++  //
++  // Prima qui si usciva con `write: false` e l'evento spariva in silenzio.
++  // E' cosi' che l'ordine 26CKPT2545 e' rimasto due settimane come consegnato
++  // mentre ShippyPro riportava "in transito, in ritardo": ogni aggiornamento
++  // reale veniva buttato via senza lasciare traccia.
++  //
++  // Su Shopify il `displayStatus` resta comunque DELIVERED — non c'e' modo di
++  // cambiarlo — ma l'evento viene accettato e salvato, e `buildParcels()`
++  // legge l'ultimo evento: la pagina cliente torna cosi' a dire la verita'.
+   if (isTerminal(last.status)) {
+-    return { write: false, reason: 'ultimo evento terminale' };
++    console.warn(
++      '[allarme] consegna ritrattata dal vettore —',
++      fulfillment.id,
++      `${last.status} -> ${nextStatus}`,
++      happenedAt || '',
++      '| displayStatus resta DELIVERED su Shopify, la pagina cliente mostra lo stato reale'
++    );
++    return { write: true, reason: `consegna ritrattata: ${last.status} -> ${nextStatus}` };
+   }
+   if (!isOutOfScale(nextStatus) && rankOf(nextStatus) < rankOf(last.status)) {
+     return { write: false, reason: `regressione ${last.status} -> ${nextStatus}` };
+@@ -289,7 +309,20 @@
+     if (f.status === 'CANCELLED') continue;
+ 
+     const last = f.events?.nodes?.[0] || null;
+-    const status = f.displayStatus === 'DELIVERED' ? 'DELIVERED' : last?.status || 'NONE';
++
++    // L'ULTIMO EVENTO VINCE SUL displayStatus DI SHOPIFY.
++    //
++    // Shopify non fa mai uscire un fulfillment da DELIVERED: `displayStatus`
++    // resta consegnato per sempre anche quando il vettore ritratta la consegna
++    // e noi scriviamo un evento successivo. Verificato sul campo il 16/09/2026
++    // sull'ordine 26CKPT2545: evento IN_TRANSIT accettato e salvato,
++    // `displayStatus` rimasto DELIVERED.
++    //
++    // Fidarsi di `displayStatus` significa quindi mostrare "Ordine consegnato"
++    // a un cliente il cui pacco e' ancora in viaggio, senza alcun rimedio
++    // possibile. Il registro eventi invece resta corretto: e' quella la fonte
++    // di verita'. `displayStatus` serve solo quando eventi non ce ne sono.
++    const status = last?.status || (f.displayStatus === 'DELIVERED' ? 'DELIVERED' : 'NONE');
+     const p = present(status);
+ 
+     // Codici distinti dentro lo stesso fulfillment.
+
+--- a/lib/shopify.js
++++ b/lib/shopify.js
+@@ -67,7 +67,14 @@
+   return cached.token;
+ }
+ 
+-export async function gql(query, variables = {}, { retryAuth = true, retryThrottle = true } = {}) {
++/**
++ * Chiamata GraphQL.
++ *
++ * @param {object} opts
++ * @param {boolean} opts.retryAuth       un solo rinnovo del token su 401
++ * @param {number}  opts.throttleRetries quanti ritenti restano sul throttling
++ */
++export async function gql(query, variables = {}, { retryAuth = true, throttleRetries = 5 } = {}) {
+   const token = await getAccessToken();
+ 
+   const res = await fetch(`https://${shop()}/admin/api/${API_VERSION}/graphql.json`, {
+@@ -82,12 +89,12 @@
+   // Token scaduto prima del previsto: se ne prende uno nuovo, una volta sola.
+   if (res.status === 401 && retryAuth) {
+     await getAccessToken({ force: true });
+-    return gql(query, variables, { retryAuth: false, retryThrottle });
++    return gql(query, variables, { retryAuth: false, throttleRetries });
+   }
+ 
+-  if (res.status === 429 && retryThrottle) {
++  if (res.status === 429 && throttleRetries > 0) {
+     await sleep(1500);
+-    return gql(query, variables, { retryAuth, retryThrottle: false });
++    return gql(query, variables, { retryAuth, throttleRetries: throttleRetries - 1 });
+   }
+ 
+   if (!res.ok) {
+@@ -95,9 +102,33 @@
+   }
+ 
+   const json = await res.json();
++
+   if (json.errors?.length) {
++    // IL THROTTLING GRAPHQL NON E' UN HTTP 429.
++    //
++    // Arriva come HTTP 200 con `errors[].extensions.code = "THROTTLED"` e
++    // `extensions.cost.throttleStatus`. Trattarlo come errore applicativo fa
++    // perdere la scrittura in silenzio: nel webhook l'eccezione viene
++    // catturata, si risponde 200 e ShippyPro non ritenta mai piu'.
++    const throttled = json.errors.some((e) => e?.extensions?.code === 'THROTTLED');
++
++    if (throttled && throttleRetries > 0) {
++      // Attesa calcolata sul budget reale invece che a caso: punti mancanti
++      // diviso velocita' di ricarica. Tetto a 10s per non bloccare un webhook.
++      const cost = json.extensions?.cost;
++      const stato = cost?.throttleStatus;
++      const mancanti = Math.max(0, (cost?.requestedQueryCost || 0) - (stato?.currentlyAvailable || 0));
++      const attesa = stato?.restoreRate
++        ? Math.min(Math.ceil((mancanti / stato.restoreRate) * 1000) + 250, 10_000)
++        : 1500;
++
++      await sleep(attesa);
++      return gql(query, variables, { retryAuth, throttleRetries: throttleRetries - 1 });
++    }
++
+     throw new Error(`Shopify GraphQL: ${JSON.stringify(json.errors).slice(0, 400)}`);
+   }
++
+   return json.data;
+ }
+ 
+
+--- a/lib/status.js
++++ b/lib/status.js
+@@ -181,8 +181,27 @@
+   // è meglio di un evento buttato via.
+   if (!status && simple != null) status = BY_SIMPLE[simple] ?? null;
+   if (!status && text) {
+-    const key = Object.keys(BY_TEXT).find((k) => text.toLowerCase().includes(k));
+-    if (key) status = BY_TEXT[key];
++    const t = text.toLowerCase().trim();
++
++    if (BY_TEXT[t]) {
++      status = BY_TEXT[t];
++    } else {
++      // Il match per sottostringa e' pericoloso proprio sul caso piu' delicato:
++      // "not delivered", "undelivered", "delivery failed — undelivered"
++      // contengono tutti "delivered" e diventerebbero una CONSEGNA, che e'
++      // terminale. Le negazioni vanno riconosciute prima.
++      const negato = /\b(not|non|no|failed|unsuccessful|attempted|refused)\b|undeliver|non consegnat|mancata consegna/.test(t);
++
++      // Chiavi piu' lunghe per prime: "out for delivery" deve battere "delivery".
++      const chiave = Object.keys(BY_TEXT)
++        .sort((a, b) => b.length - a.length)
++        .find((k) => t.includes(k));
++
++      // Su una negazione non si ripiega su uno stato "quasi giusto": si lascia
++      // null e l'evento non viene scritto. Meglio nessuno stato che una
++      // consegna inventata e irreversibile.
++      if (chiave && !(negato && BY_TEXT[chiave] === 'DELIVERED')) status = BY_TEXT[chiave];
++    }
+   }
+ 
+   // `AtPudo` è un attributo booleano del webhook: il pacco è fisicamente a un
+
+--- a/scripts/backfill.mjs
++++ b/scripts/backfill.mjs
+@@ -16,7 +16,7 @@
+ import fs from 'node:fs';
+ import '../lib/env.js';
+ import { gql } from '../lib/shopify.js';
+-import { getTracking } from '../lib/shippypro.js';
++import { getTracking, unwrapTracking, trackingHasEvents } from '../lib/shippypro.js';
+ import { mapShippyProStatus } from '../lib/status.js';
+ import { shouldWriteEvent, createFulfillmentEvent, maybeTagDelivered, getOrderByGid } from '../lib/orders.js';
+ 
+@@ -55,7 +55,7 @@
+   } while (cursor);
+ }
+ 
+-const rows = [['ordine', 'tracking', 'corriere', 'stato_shopify_prima', 'stato_shippypro', 'stato_da_scrivere', 'esito']];
++const rows = [['ordine', 'tracking', 'corriere', 'stato_shopify_prima', 'stato_shippypro', 'stato_da_scrivere', 'quando', 'esito']];
+ 
+ console.log(`\nBackfill — finestra ${DAYS} giorni — ${APPLY ? 'APPLY (scrive)' : 'DRY-RUN (non scrive)'}\n`);
+ 
+@@ -78,18 +78,45 @@
+ 
+     seen++;
+     let raw, status, esito;
++    const quando = new Date().toISOString();
++
+     try {
+       raw = await getTracking(info.number);
+-      ({ status } = mapShippyProStatus(unwrap(raw)));
+     } catch (err) {
+       esito = `errore ShippyPro: ${err.message}`;
+       failed++;
+-      rows.push([order.name, info.number, info.company || '', f.displayStatus, '', '', esito]);
++      rows.push([order.name, info.number, info.company || '', f.displayStatus, '', '', quando, esito]);
+       console.log(`  ✗ ${order.name} ${info.number} — ${esito}`);
+       continue;
+     }
+ 
+-    const decision = shouldWriteEvent(f, status, new Date().toISOString());
++    const evento = unwrapTracking(raw);
++
++    // ⚠️  IL GUARD. NON RIMUOVERLO E NON REIMPLEMENTARLO QUI.
++    //
++    // Su una LDV che il vettore non ha ancora scansionato, GetTracking risponde
++    // con uno `StatusCode` di primo livello senza alcuna cronologia:
++    // `Details: []` e `FirstStatusDate: "0"`. Quel codice non descrive il pacco,
++    // descrive l'assenza di dati.
++    //
++    // Fidarsene ha gia' prodotto due volte dati falsi in produzione:
++    //   27/08/2026  StatusCode 5 -> 70 false "spedizioni in ritardo"
++    //   28/08/2026  StatusCode 6 -> 21 false CONSEGNE
++    //
++    // Le false consegne sono irreparabili: DELIVERED e' terminale e su Shopify
++    // un fulfillment non ne esce piu'.
++    //
++    // Questo script NON reimplementa la logica delle lib: la importa.
++    if (!trackingHasEvents(evento)) {
++      skipped++;
++      rows.push([order.name, info.number, info.company || '', f.displayStatus, describe(raw), '', quando, 'no-op: nessun evento dal vettore']);
++      console.log(`  · ${order.name} ${info.number} — nessun evento dal vettore`);
++      continue;
++    }
++
++    ({ status } = mapShippyProStatus(evento));
++
++    const decision = shouldWriteEvent(f, status, quando);
+     if (!decision.write) {
+       esito = `no-op: ${decision.reason}`;
+       skipped++;
+@@ -97,7 +124,7 @@
+       esito = 'da scrivere (dry-run)';
+     } else {
+       try {
+-        await createFulfillmentEvent({ fulfillmentId: f.id, status, happenedAt: new Date().toISOString() });
++        await createFulfillmentEvent({ fulfillmentId: f.id, status, happenedAt: quando });
+         if (status === 'DELIVERED') await maybeTagDelivered(await getOrderByGid(order.id));
+         esito = 'scritto';
+         written++;
+@@ -107,7 +134,7 @@
+       }
+     }
+ 
+-    rows.push([order.name, info.number, info.company || '', f.displayStatus, describe(raw), status || '', esito]);
++    rows.push([order.name, info.number, info.company || '', f.displayStatus, describe(raw), status || '', quando, esito]);
+     console.log(`  ${esito === 'scritto' ? '✓' : '·'} ${order.name} ${info.number} → ${status || '—'} (${esito})`);
+   }
+ }
+@@ -119,12 +146,19 @@
+ console.log(`Report: ${OUT}\n`);
+ if (!APPLY) console.log('Nessuna scrittura effettuata. Controlla il CSV, poi rilancia con --apply.\n');
+ 
+-function unwrap(raw) {
+-  return raw?.Tracking || raw?.tracking || raw?.Result || raw?.Shipment || raw;
+-}
++/**
++ * Riga diagnostica per il CSV. `unwrapTracking` arriva da lib/shippypro.js:
++ * la copia locale di `unwrap()` che stava qui saltava il controllo sugli
++ * eventi del vettore ed e' la causa diretta dei falsi stati del 27-28/08/2026.
++ */
+ function describe(raw) {
+-  const u = unwrap(raw) || {};
+-  return [u.StatusCode ?? u.status_code ?? '', u.StatusDescription ?? u.Status ?? ''].filter(Boolean).join(' ');
++  const u = unwrapTracking(raw) || {};
++  const dettagli = Array.isArray(raw?.Details) ? raw.Details.length : 0;
++  return [
++    u.StatusCode ?? u.status_code ?? '',
++    `Details=${dettagli}`,
++    u.StatusDescription ?? u.Status ?? '',
++  ].filter(Boolean).join(' ');
+ }
+ function csv(v) {
+   const s = String(v ?? '');
+
+--- a/scripts/ripara-consegnati.mjs
++++ b/scripts/ripara-consegnati.mjs
+@@ -21,10 +21,16 @@
+  *       dry-run: dice cosa farebbe, non scrive nulla
+  *
+  *   node scripts/ripara-consegnati.mjs --csv ... --apply --max 1
+- *       PROVA su un solo ordine. Da fare SEMPRE per prima cosa: nessuno ha mai
+- *       verificato che Shopify accetti di far uscire un fulfillment da
+- *       DELIVERED. Lo script ricontrolla il `displayStatus` dopo la scrittura
+- *       e lo riporta.
++ *       PROVA su un solo ordine, sempre consigliata.
++ *
++ * Cosa succede davvero su Shopify (verificato il 16/09/2026, ordine 26CKPT2545)
++ * ---------------------------------------------------------------------------
++ * L'evento correttivo viene accettato e salvato, ma `displayStatus` resta
++ * DELIVERED per sempre: Shopify non fa uscire un fulfillment dallo stato
++ * terminale. Non e' un errore dello script ed e' inutile insistere.
++ * La riparazione funziona lo stesso perche' `buildParcels()` in lib/orders.js
++ * legge l'ultimo evento, non `displayStatus`. Senza quella modifica questo
++ * script non cambia nulla per il cliente.
+  *
+  *   node scripts/ripara-consegnati.mjs --csv ... --apply
+  *       applica a tutta la lista
+@@ -175,7 +181,7 @@
+  * Esecuzione
+  * ------------------------------------------------------------------ */
+ 
+-const righe = [['ordine', 'tracking', 'statoPrima', 'shippyPro', 'statoScritto', 'statoDopo', 'tag', 'esito']];
++const righe = [['ordine', 'tracking', 'statoPrima', 'shippyPro', 'statoScritto', 'ultimoEventoDopo', 'tag', 'esito']];
+ let riparati = 0, saltati = 0, errori = 0;
+ 
+ console.log(`\nRiparazione falsi consegnati — ${APPLY ? 'APPLY (scrive)' : 'DRY-RUN (non scrive)'}`);
+@@ -252,27 +258,41 @@
+       await scriviEvento(f.id, daScrivere, nota);
+       await sleep(400);
+ 
+-      // Verifica: Shopify ha davvero fatto uscire il fulfillment da DELIVERED?
+       const dopo = await trovaOrdine(ordine.name);
+       const fDopo = dopo?.fulfillments.find((x) => x.id === f.id);
+-      const statoDopo = fDopo?.displayStatus || '?';
++
++      // Su Shopify `displayStatus` NON esce mai da DELIVERED: e' un limite
++      // della piattaforma, verificato il 16/09/2026 sull'ordine 26CKPT2545.
++      // L'evento pero' viene accettato e salvato, e `buildParcels()` legge
++      // l'ultimo evento: e' quello il risultato da controllare.
++      const eventoDopo = fDopo?.events?.nodes?.[0]?.status || '?';
+ 
+       let esitoTag = '';
+       if (!SENZA_TAG && dopo) {
+-        const attivi = dopo.fulfillments.filter((x) => x.status !== 'CANCELLED');
+-        const tuttiConsegnati = attivi.length && attivi.every((x) => x.displayStatus === 'DELIVERED');
+-        if (!tuttiConsegnati && dopo.tags.includes(APP_TAGS.DELIVERED)) {
+-          await togliTag(dopo.id, [APP_TAGS.DELIVERED]);
+-          esitoTag = 'tag consegnato rimosso';
+-        } else if (tuttiConsegnati) {
+-          esitoTag = 'tag lasciato: altre spedizioni risultano consegnate';
++        if (!dopo.tags.includes(APP_TAGS.DELIVERED)) {
++          esitoTag = 'tag non presente';
++        } else {
++          // Stesso motivo: il tag si decide sull'ultimo evento di ogni
++          // spedizione, non su `displayStatus` che resterebbe sempre DELIVERED
++          // e impedirebbe per sempre la rimozione.
++          const attivi = dopo.fulfillments.filter((x) => x.status !== 'CANCELLED');
++          const tuttiConsegnati =
++            attivi.length > 0 &&
++            attivi.every((x) => (x.events?.nodes?.[0]?.status || x.displayStatus) === 'DELIVERED');
++
++          if (tuttiConsegnati) {
++            esitoTag = 'tag lasciato: le altre spedizioni risultano consegnate';
++          } else {
++            await togliTag(dopo.id, [APP_TAGS.DELIVERED]);
++            esitoTag = 'tag consegnato rimosso';
++          }
+         }
+       }
+ 
+       riparati++;
+-      righe.push([ordine.name, numero, 'DELIVERED', evidenza ? statoSp : 'nessuna evidenza', daScrivere, statoDopo, esitoTag, 'riparato']);
+-      const allarme = statoDopo === 'DELIVERED' ? '  <-- ATTENZIONE: displayStatus NON è cambiato' : '';
+-      console.log(`  ok ${ordine.name} ${numero} — ${daScrivere}, ora ${statoDopo}${esitoTag ? ` · ${esitoTag}` : ''}${allarme}`);
++      righe.push([ordine.name, numero, 'DELIVERED', evidenza ? statoSp : 'nessuna evidenza', daScrivere, eventoDopo, esitoTag, 'riparato']);
++      const allarme = eventoDopo === daScrivere ? '' : `  <-- ATTENZIONE: ultimo evento ${eventoDopo}, atteso ${daScrivere}`;
++      console.log(`  ok ${ordine.name} ${numero} — ultimo evento ora ${eventoDopo}${esitoTag ? ` · ${esitoTag}` : ''}${allarme}`);
+ 
+       await sleep(300);
+     } catch (err) {
+

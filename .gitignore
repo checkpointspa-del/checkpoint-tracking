@@ -1,0 +1,16 @@
+node_modules
+.vercel
+
+# Segreti: mai in git, per nessun motivo.
+.env
+.env.local
+.env.*.local
+
+# Report operativi prodotti dagli script: dati di esercizio, non codice.
+backfill-*.csv
+ripara-*.csv
+riallinea-tag-*.csv
+snapshot-*.csv
+data-prevista-*.csv
+audit-consegnati-*.csv
+consegnati-sospetti-*.csv

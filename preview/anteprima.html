@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Anteprima pagina tracking — Check Point</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..700&family=Instrument+Sans:wght@400..600&display=swap">
+<style>
+  body{margin:0;background:#F1F3F6;font-family:"Instrument Sans","Helvetica Neue",Arial,sans-serif;color:#0C0E12;padding-bottom:78px}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:#15181F;border-top:1px solid #2A2F3A;padding:11px 16px;display:flex;gap:7px;flex-wrap:wrap;justify-content:center;z-index:50}
+  .bar b{color:#8B93A3;font-size:10px;letter-spacing:.15em;text-transform:uppercase;align-self:center;margin-right:6px;font-weight:600}
+  .bar button{background:transparent;border:1px solid #2A2F3A;color:#8B93A3;border-radius:999px;padding:5px 11px;font:inherit;font-size:12.5px;cursor:pointer}
+  .bar button[aria-pressed=true]{background:#E8EBF1;border-color:#E8EBF1;color:#15181F;font-weight:600}
+
+#cp-root{
+  --cp-ink:#0C0E12;
+  --cp-ink-2:#39404C;
+  --cp-muted:#767E8E;
+  --cp-card:#FFFFFF;
+  --cp-line:#E1E5EC;
+  --cp-line-strong:#C9D0DA;
+  --cp-accent:#1B34C4;
+  --cp-accent-soft:#E7EAFB;
+  --cp-ok:#0B6E4C;
+  --cp-ok-soft:#DFF0E8;
+  --cp-warn:#8C5308;
+  --cp-warn-soft:#F9EBD8;
+  --cp-display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --cp-body:inherit;
+}
+.cp-wrap{max-width:520px;margin:0 auto;padding:28px 16px 56px}
+#cp-root *{box-sizing:border-box}
+
+.cp-card{
+  background:var(--cp-card);
+  color:var(--cp-ink);
+  border:1px solid var(--cp-line);
+  border-radius:14px;
+  box-shadow:0 1px 2px rgba(12,14,18,.05), 0 12px 28px -18px rgba(12,14,18,.3);
+  overflow:hidden;
+  font-family:var(--cp-body);
+}
+.cp-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:15px 20px;border-bottom:1px solid var(--cp-line);
+}
+.cp-mark{width:20px;height:20px;display:block;color:var(--cp-ink);flex:none}
+.cp-order{
+  font-family:var(--cp-display);font-size:12px;letter-spacing:.06em;
+  color:var(--cp-muted);font-variant-numeric:tabular-nums;
+}
+.cp-body{padding:26px 20px 24px;display:flex;flex-direction:column;gap:22px}
+.cp-loading{margin:0;text-align:center;color:var(--cp-muted);font-size:14px}
+
+/* binario */
+.cp-rail{position:relative;padding:30px 0 4px}
+.cp-track{position:absolute;left:12.5%;right:12.5%;top:38px;height:2px;background:var(--cp-line-strong);border-radius:2px}
+.cp-fill{position:absolute;left:12.5%;top:38px;height:2px;width:calc(var(--p) * 75%);background:var(--cp-ink);border-radius:2px;transition:width .9s cubic-bezier(.22,.9,.28,1)}
+.cp-rail.is-done .cp-fill{background:var(--cp-ok)}
+.cp-rail.is-alert .cp-fill{background:var(--cp-warn)}
+.cp-runner{
+  position:absolute;top:38px;left:calc(12.5% + var(--p) * 75%);
+  transform:translate(-50%,-50%);
+  width:34px;height:34px;border-radius:50%;background:var(--cp-card);
+  display:grid;place-items:center;color:var(--cp-ink);z-index:2;
+  transition:left .9s cubic-bezier(.22,.9,.28,1);
+}
+.cp-rail.is-done .cp-runner{color:var(--cp-ok)}
+.cp-rail.is-alert .cp-runner{color:var(--cp-warn)}
+.cp-runner svg{width:22px;height:22px;display:block}
+.cp-rail.is-moving .cp-runner svg{animation:cp-nudge 2.6s ease-in-out infinite}
+@keyframes cp-nudge{0%,100%{transform:translateX(0)}50%{transform:translateX(3px)}}
+.cp-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);position:relative;z-index:1}
+.cp-steps li{display:flex;flex-direction:column;align-items:center;gap:12px}
+.cp-dot{width:9px;height:9px;border-radius:50%;background:var(--cp-card);border:2px solid var(--cp-line-strong);margin-top:4px}
+.cp-steps li.done .cp-dot{background:var(--cp-ink);border-color:var(--cp-ink)}
+.cp-rail.is-done .cp-steps li.done .cp-dot{background:var(--cp-ok);border-color:var(--cp-ok)}
+.cp-rail.is-alert .cp-steps li.done .cp-dot{background:var(--cp-warn);border-color:var(--cp-warn)}
+.cp-steps li span:last-child{
+  font-family:var(--cp-display);font-size:9.5px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--cp-muted);text-align:center;line-height:1.25;
+}
+.cp-steps li.done span:last-child{color:var(--cp-ink-2)}
+
+/* blocco stato */
+.cp-state{display:flex;flex-direction:column;gap:8px;text-align:center;padding:0 4px}
+.cp-state h2{
+  font-family:var(--cp-display);font-weight:700;font-size:26px;line-height:1.12;
+  letter-spacing:-.015em;margin:0;color:var(--cp-ink);text-wrap:balance;
+}
+.cp-state p{margin:0;color:var(--cp-ink-2);font-size:15px;line-height:1.5}
+.cp-eta{
+  align-self:center;display:inline-flex;align-items:center;gap:8px;
+  background:var(--cp-accent-soft);color:var(--cp-accent);border-radius:999px;
+  padding:7px 14px 7px 12px;font-size:13.5px;font-weight:600;margin-top:2px;
+}
+.cp-eta::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.65}
+.cp-note{align-self:center;font-size:13.5px;color:var(--cp-muted);max-width:34ch;text-align:center;line-height:1.5}
+.cp-alert{background:var(--cp-warn-soft);color:var(--cp-warn);border-radius:10px;padding:12px 14px;font-size:13.5px;text-align:center;line-height:1.5}
+
+.cp-cta{
+  display:block;width:100%;background:var(--cp-ink);color:var(--cp-card);
+  border:none;border-radius:10px;padding:14px 18px;
+  font-family:var(--cp-display);font-weight:600;font-size:14.5px;
+  text-align:center;text-decoration:none;transition:opacity .15s;
+}
+.cp-cta:hover{opacity:.87;color:var(--cp-card)}
+.cp-cta:focus-visible{outline:2px solid var(--cp-accent);outline-offset:3px}
+
+.cp-meta{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--cp-line);padding-top:14px;margin:0;font-size:13px}
+.cp-meta dt{font-family:var(--cp-display);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--cp-muted);margin:0 0 3px}
+.cp-meta dd{margin:0;color:var(--cp-ink-2);font-variant-numeric:tabular-nums}
+.cp-meta dd.num{word-break:break-all}
+
+/* più spedizioni */
+.cp-parcels{display:flex;flex-direction:column;gap:14px}
+.cp-parcel{border:1px solid var(--cp-line);border-radius:12px;padding:16px 16px 18px;display:flex;flex-direction:column;gap:14px}
+.cp-parcel-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.cp-parcel-n{font-family:var(--cp-display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cp-muted)}
+.cp-pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--cp-accent-soft);color:var(--cp-accent)}
+.cp-pill.ok{background:var(--cp-ok-soft);color:var(--cp-ok)}
+.cp-pill.warn{background:var(--cp-warn-soft);color:var(--cp-warn)}
+.cp-pill.idle{background:#F1F3F5;color:var(--cp-muted)}
+.cp-parcel .cp-rail{padding:24px 0 2px}
+.cp-parcel .cp-track,.cp-parcel .cp-fill,.cp-parcel .cp-runner{top:30px}
+.cp-parcel .cp-runner{width:30px;height:30px}
+.cp-parcel .cp-runner svg{width:19px;height:19px}
+.cp-parcel .cp-cta{padding:11px 16px;font-size:13.5px}
+.cp-parcel-sub{margin:0;text-align:center;font-size:13.5px;color:var(--cp-ink-2);line-height:1.5}
+
+.cp-foot{border-top:1px solid var(--cp-line);padding:14px 20px 16px;text-align:center;font-size:12.5px;color:var(--cp-muted)}
+.cp-foot a{color:var(--cp-ink-2);text-decoration:underline;text-underline-offset:2px}
+
+.cp-skeleton .cp-body{min-height:160px;display:grid;place-items:center}
+
+@media (prefers-reduced-motion: reduce){
+  #cp-root *{animation:none !important;transition:none !important}
+}
+
+</style></head>
+<body>
+<div class="cp-wrap">
+  <div id="cp-root" data-api="mock"><div class="cp-card cp-skeleton"><div class="cp-body"><p class="cp-loading">Caricamento…</p></div></div></div>
+</div>
+<nav class="bar" id="bar"><b>Anteprima</b></nav>
+<script>
+const MOCK = {
+  "Fase 1 · con data": {
+    "order": "26CKPT0001",
+    "allDelivered": false,
+    "eta": "25 agosto",
+    "parcels": [
+      {
+        "status": "NONE",
+        "phase": 1,
+        "step": 0,
+        "tone": "idle",
+        "title": "Ordine in lavorazione",
+        "sub": "Stiamo preparando il tuo pacco.",
+        "pill": "In preparazione",
+        "number": null,
+        "carrier": null,
+        "carrierUrl": null,
+        "happenedAt": null
+      }
+    ]
+  },
+  "Fase 1 · senza data": {
+    "order": "26CKPT0001",
+    "allDelivered": false,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "NONE",
+        "phase": 1,
+        "step": 0,
+        "tone": "idle",
+        "title": "Ordine in lavorazione",
+        "sub": "Stiamo preparando il tuo pacco.",
+        "pill": "In preparazione",
+        "number": null,
+        "carrier": null,
+        "carrierUrl": null,
+        "happenedAt": null
+      }
+    ]
+  },
+  "In viaggio": {
+    "order": "26CKPT0001",
+    "allDelivered": false,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "IN_TRANSIT",
+        "phase": 2,
+        "step": 1,
+        "tone": "live",
+        "title": "Spedizione in viaggio",
+        "sub": "Il pacco è in transito verso di te.",
+        "pill": "In viaggio",
+        "number": "AAA0000000001",
+        "carrier": "Poste Italiane",
+        "carrierUrl": "https://www.poste.it/cerca/index.html#/risultati-spedizioni/CODICE",
+        "happenedAt": null
+      }
+    ]
+  },
+  "In consegna": {
+    "order": "26CKPT0001",
+    "allDelivered": false,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "OUT_FOR_DELIVERY",
+        "phase": 2,
+        "step": 2,
+        "tone": "live",
+        "title": "In consegna oggi",
+        "sub": "Il pacco è sul mezzo del corriere.",
+        "pill": "In consegna",
+        "number": "AAA0000000001",
+        "carrier": "Poste Italiane",
+        "carrierUrl": "https://www.poste.it/cerca/index.html#/risultati-spedizioni/CODICE",
+        "happenedAt": null
+      }
+    ]
+  },
+  "Eccezione": {
+    "order": "26CKPT0001",
+    "allDelivered": false,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "DELAYED",
+        "phase": 2,
+        "step": 1,
+        "tone": "warn",
+        "title": "Spedizione in ritardo",
+        "sub": "Il corriere segnala un ritardo. Il pacco è comunque in viaggio.",
+        "pill": "In ritardo",
+        "number": "AAA0000000001",
+        "carrier": "Poste Italiane",
+        "carrierUrl": "https://www.poste.it/cerca/index.html#/risultati-spedizioni/CODICE",
+        "happenedAt": null
+      }
+    ]
+  },
+  "Consegnato": {
+    "order": "26CKPT0001",
+    "allDelivered": true,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "DELIVERED",
+        "phase": 3,
+        "step": 3,
+        "tone": "done",
+        "title": "Ordine consegnato",
+        "sub": "",
+        "pill": "Consegnato",
+        "number": "AAA0000000001",
+        "carrier": "Poste Italiane",
+        "carrierUrl": null,
+        "happenedAt": null
+      }
+    ]
+  },
+  "2 spedizioni · miste": {
+    "order": "26CKPT0002",
+    "allDelivered": false,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "DELIVERED",
+        "phase": 3,
+        "step": 3,
+        "tone": "done",
+        "title": "Spedizione consegnata",
+        "sub": "",
+        "pill": "Consegnato",
+        "number": "AAA0000000001",
+        "carrier": "Poste Italiane",
+        "carrierUrl": null,
+        "happenedAt": null
+      },
+      {
+        "status": "IN_TRANSIT",
+        "phase": 2,
+        "step": 1,
+        "tone": "live",
+        "title": "Spedizione in viaggio",
+        "sub": "Il pacco è in transito verso di te.",
+        "pill": "In viaggio",
+        "number": "AAA0000000002",
+        "carrier": "Poste Italiane",
+        "carrierUrl": "https://www.poste.it/cerca/index.html#/risultati-spedizioni/CODICE",
+        "happenedAt": null
+      }
+    ]
+  },
+  "2 spedizioni · complete": {
+    "order": "26CKPT0002",
+    "allDelivered": true,
+    "eta": null,
+    "parcels": [
+      {
+        "status": "DELIVERED",
+        "phase": 3,
+        "step": 3,
+        "tone": "done",
+        "title": "Spedizione consegnata",
+        "sub": "",
+        "pill": "Consegnato",
+        "number": "AAA0000000001",
+        "carrier": "Poste Italiane",
+        "carrierUrl": null,
+        "happenedAt": null
+      },
+      {
+        "status": "DELIVERED",
+        "phase": 3,
+        "step": 3,
+        "tone": "done",
+        "title": "Spedizione consegnata",
+        "sub": "",
+        "pill": "Consegnato",
+        "number": "AAA0000000002",
+        "carrier": "Poste Italiane",
+        "carrierUrl": null,
+        "happenedAt": null
+      }
+    ]
+  },
+  "Link non valido": null
+};
+let current = Object.keys(MOCK)[0];
+const RENDER = "\n(function () {\n  var root = document.getElementById('cp-root');\n  var API = root.getAttribute('data-api');\n\n  var LOGO = '<svg viewBox=\"0 0 946 946\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><g transform=\"translate(0,946) scale(0.1,-0.1)\" fill=\"currentColor\"><path d=\"M4435 9454 c-1197 -92 -2230 -559 -3050 -1379 -866 -866 -1354 -2005 -1382 -3230 -36 -1544 670 -2987 1912 -3910 1174 -873 2712 -1149 4125 -740 776 225 1449 624 2025 1200 786 785 1242 1750 1367 2890 17 159 17 751 0 900 -46 395 -105 670 -214 1005 -88 269 -269 696 -292 687 -6 -3 -1527 -1003 -3381 -2224 -1853 -1220 -3388 -2229 -3410 -2243 -31 -19 13 38 195 256 129 154 1311 1564 2625 3132 1315 1569 2391 2856 2392 2860 6 17 -291 194 -505 301 -502 251 -1012 403 -1587 472 -163 20 -676 34 -820 23z\"/></g></svg>';\n\n  var STEPS = ['Lavorazione', 'In viaggio', 'In consegna', 'Consegnato'];\n  var POS = [0, 0.333, 0.666, 1];\n\n  function esc(s) {\n    return String(s == null ? '' : s).replace(/[&<>\"']/g, function (c) {\n      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c];\n    });\n  }\n\n  function rail(p) {\n    var cls = 'cp-rail';\n    if (p.tone === 'done') cls += ' is-done';\n    if (p.tone === 'warn') cls += ' is-alert';\n    if (p.tone === 'live') cls += ' is-moving';\n    var steps = STEPS.map(function (label, i) {\n      return '<li class=\"' + (i <= p.step ? 'done' : '') + '\"><span class=\"cp-dot\"></span><span>' + label + '</span></li>';\n    }).join('');\n    return '<div class=\"' + cls + '\" style=\"--p:' + POS[p.step] + '\">' +\n      '<div class=\"cp-track\"></div><div class=\"cp-fill\"></div>' +\n      '<div class=\"cp-runner\">' + LOGO + '</div>' +\n      '<ol class=\"cp-steps\">' + steps + '</ol></div>';\n  }\n\n  function meta(p) {\n    if (!p.number) return '';\n    return '<dl class=\"cp-meta\">' +\n      (p.carrier ? '<div><dt>Corriere</dt><dd>' + esc(p.carrier) + '</dd></div>' : '') +\n      '<div><dt>Codice spedizione</dt><dd class=\"num\">' + esc(p.number) + '</dd></div></dl>';\n  }\n\n  function cta(p) {\n    if (p.phase !== 2 || !p.carrierUrl) return '';\n    return '<a class=\"cp-cta\" href=\"' + esc(p.carrierUrl) + '\" target=\"_blank\" rel=\"noopener\">Traccia la spedizione</a>';\n  }\n\n  function single(data) {\n    var p = data.parcels[0];\n    var out = rail(p);\n    var extra = '';\n\n    if (p.phase === 1) {\n      if (data.eta) extra += '<div class=\"cp-eta\">Spedizione prevista: <b>' + esc(data.eta) + '</b></div>';\n      extra += '<p class=\"cp-note\">Non devi fare nulla: ti avvisiamo appena il pacco parte.</p>';\n    }\n    if (p.tone === 'warn') {\n      extra += '<div class=\"cp-alert\">Controlla il tracking del corriere per i dettagli. Se il problema continua, scrivici.</div>';\n    }\n\n    out += '<div class=\"cp-state\"><h2>' + esc(p.title) + '</h2>' +\n      (p.sub ? '<p>' + esc(p.sub) + '</p>' : '') + extra + '</div>';\n    out += cta(p) + meta(p);\n    return out;\n  }\n\n  function multi(data) {\n    var head = data.allDelivered\n      ? { t: 'Ordine consegnato', s: 'Tutte le spedizioni sono arrivate.' }\n      : { t: 'Ordine in ' + data.parcels.length + ' spedizioni', s: 'Segui ogni pacco separatamente qui sotto.' };\n\n    var cards = data.parcels.map(function (p, i) {\n      var tone = p.tone === 'done' ? 'ok' : p.tone === 'warn' ? 'warn' : p.tone === 'idle' ? 'idle' : '';\n      return '<div class=\"cp-parcel\">' +\n        '<div class=\"cp-parcel-head\"><span class=\"cp-parcel-n\">Spedizione ' + (i + 1) + ' di ' + data.parcels.length + '</span>' +\n        '<span class=\"cp-pill ' + tone + '\">' + esc(p.pill) + '</span></div>' +\n        rail(p) +\n        '<p class=\"cp-parcel-sub\"><b>' + esc(p.title) + '</b>' + (p.sub ? ' — ' + esc(p.sub) : '') + '</p>' +\n        cta(p) + meta(p) + '</div>';\n    }).join('');\n\n    return '<div class=\"cp-state\"><h2>' + head.t + '</h2><p>' + head.s + '</p></div>' +\n      '<div class=\"cp-parcels\">' + cards + '</div>';\n  }\n\n  function card(inner, order) {\n    return '<div class=\"cp-card\">' +\n      '<div class=\"cp-head\"><span class=\"cp-mark\">' + LOGO + '</span>' +\n      '<span class=\"cp-order\">' + (order ? 'Ordine ' + esc(order) : '') + '</span></div>' +\n      '<div class=\"cp-body\">' + inner + '</div>' +\n      '<div class=\"cp-foot\">Hai bisogno di aiuto? <a href=\"/pages/contattaci\">Scrivici</a></div></div>';\n  }\n\n  function message(title, text) {\n    root.innerHTML = card('<div class=\"cp-state\"><h2>' + title + '</h2><p>' + text + '</p></div>', null);\n  }\n\n  var q = new URLSearchParams(window.location.search);\n  var o = q.get('o');\n  var t = q.get('t');\n\n  if (!o || !t) {\n    message('Link non valido', 'Apri il tracking dal link che trovi nella tua email di conferma spedizione.');\n    return;\n  }\n\n  fetch(API + '?o=' + encodeURIComponent(o) + '&t=' + encodeURIComponent(t), { credentials: 'omit' })\n    .then(function (r) {\n      if (r.status === 404) throw new Error('notfound');\n      if (!r.ok) throw new Error('down');\n      return r.json();\n    })\n    .then(function (data) {\n      var inner = data.parcels.length > 1 ? multi(data) : single(data);\n      root.innerHTML = card(inner, data.order);\n    })\n    .catch(function (err) {\n      if (err.message === 'notfound') {\n        message('Spedizione non trovata', 'Il link potrebbe essere scaduto o non corretto. Controlla la tua email di conferma spedizione.');\n      } else {\n        message('Servizio momentaneamente non disponibile', 'Riprova fra qualche minuto.');\n      }\n    });\n})();\n";
+
+window.fetch = (url) => Promise.resolve({
+  ok: MOCK[current] !== null,
+  status: MOCK[current] === null ? 404 : 200,
+  json: () => Promise.resolve(MOCK[current]),
+});
+
+function run(){
+  const q = MOCK[current] === null ? '' : '?o=1&t=1';
+  history.replaceState(null, '', location.pathname + q);
+  document.getElementById('cp-root').innerHTML =
+    '<div class="cp-card cp-skeleton"><div class="cp-body"><p class="cp-loading">Caricamento…</p></div></div>';
+  new Function(RENDER)();
+}
+
+const bar = document.getElementById('bar');
+Object.keys(MOCK).forEach((name, i) => {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+  b.onclick = () => {
+    bar.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    current = name;
+    run();
+  };
+  bar.appendChild(b);
+});
+run();
+</script>
+</body></html>

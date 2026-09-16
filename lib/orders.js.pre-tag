@@ -1,0 +1,287 @@
+import { gql, assertNoUserErrors, numericId } from './shopify.js';
+import { present, isTerminal, rankOf, isOutOfScale } from './status.js';
+import { carrierUrl } from './carriers.js';
+import { makeToken } from './token.js';
+import { parseEtaTag, etaIsStillRelevant, formatEtaLabel } from './eta.js';
+import { APP_TAGS, hasAlert, stripTags } from './tags.js';
+
+/**
+ * Con il flag `alert` l'ordine ha un dato mancante a monte: la data calcolata
+ * non è affidabile e promettere una spedizione che slitterà genera esattamente
+ * le richieste al customer service che questa pagina deve evitare.
+ * Metti a false per mostrare comunque la data.
+ */
+const HIDE_ETA_ON_ALERT = true;
+
+const ORDER_FIELDS = `
+  id
+  name
+  tags
+  displayFulfillmentStatus
+  snapshot: metafield(namespace: "checkpoint", key: "spedizione_stato") { value }
+  fulfillments(first: 20) {
+    id
+    status
+    displayStatus
+    createdAt
+    trackingInfo { company number url }
+    events(first: 1, sortKey: HAPPENED_AT, reverse: true) {
+      nodes { status happenedAt message }
+    }
+  }
+`;
+
+/**
+ * Risolve un codice spedizione nell'ordine Shopify.
+ *
+ * Usa la ricerca full-text: il filtro `tracking_number:` NON esiste nella
+ * search syntax di Shopify e viene ignorato in silenzio, restituendo tutti
+ * gli ordini dello store. Non usarlo mai.
+ *
+ * Restituisce TUTTI i fulfillment con quel codice, non il primo: lo stesso
+ * tracking può comparire su più fulfillment dello stesso ordine (succede
+ * quando una spedizione viene registrata in più righe). Fermarsi al primo
+ * lascerebbe gli altri senza stati, per sempre.
+ *
+ * NOTA — limite Shopify: senza lo scope `read_all_orders` l'app vede solo gli
+ * ordini degli ultimi 60 giorni. Un codice più vecchio non viene trovato, e
+ * non è un errore dell'app.
+ *
+ * @returns {{order: object, fulfillments: object[]}|null}
+ */
+export async function findOrderByTracking(trackingNumber) {
+  const clean = String(trackingNumber).trim();
+  if (!clean) return null;
+
+  const data = await gql(
+    `query($q: String!) { orders(first: 10, query: $q) { nodes { ${ORDER_FIELDS} } } }`,
+    { q: clean }
+  );
+
+  // Match esatto sul codice: la full-text può restituire più ordini.
+  for (const order of data.orders.nodes) {
+    const matches = order.fulfillments.filter((ff) =>
+      ff.trackingInfo.some((t) => (t.number || '').trim() === clean)
+    );
+    if (matches.length) return { order, fulfillments: matches };
+  }
+  return null;
+}
+
+export async function getOrderById(numeric) {
+  const data = await gql(
+    `query($id: ID!) { order(id: $id) { ${ORDER_FIELDS} } }`,
+    { id: `gid://shopify/Order/${numeric}` }
+  );
+  return data.order;
+}
+
+export async function getOrderByGid(gid) {
+  const data = await gql(`query($id: ID!) { order(id: $id) { ${ORDER_FIELDS} } }`, { id: gid });
+  return data.order;
+}
+
+/* ------------------------------------------------------------------ *
+ * Idempotenza
+ * ------------------------------------------------------------------ */
+
+/**
+ * Decide se scrivere l'evento. Lo stato precedente vive già in Shopify,
+ * quindi l'app resta senza database.
+ *
+ * @returns {{write: boolean, reason: string}}
+ */
+export function shouldWriteEvent(fulfillment, nextStatus, happenedAt) {
+  if (!nextStatus) return { write: false, reason: 'stato non mappato' };
+
+  if (fulfillment.displayStatus === 'DELIVERED') {
+    return { write: false, reason: 'spedizione già consegnata, stato terminale' };
+  }
+  if (fulfillment.status === 'CANCELLED') {
+    return { write: false, reason: 'fulfillment annullato' };
+  }
+
+  const last = fulfillment.events?.nodes?.[0];
+  if (!last) return { write: true, reason: 'primo evento' };
+
+  if (last.status === nextStatus) {
+    return { write: false, reason: 'stato identico al precedente' };
+  }
+  if (happenedAt && last.happenedAt && new Date(happenedAt) <= new Date(last.happenedAt)) {
+    return { write: false, reason: 'evento più vecchio dell\'ultimo registrato' };
+  }
+  if (isTerminal(last.status)) {
+    return { write: false, reason: 'ultimo evento terminale' };
+  }
+  if (!isOutOfScale(nextStatus) && rankOf(nextStatus) < rankOf(last.status)) {
+    return { write: false, reason: `regressione ${last.status} -> ${nextStatus}` };
+  }
+  return { write: true, reason: 'ok' };
+}
+
+/* ------------------------------------------------------------------ *
+ * Scritture
+ * ------------------------------------------------------------------ */
+
+export async function createFulfillmentEvent({ fulfillmentId, status, happenedAt, message, estimatedDeliveryAt }) {
+  const data = await gql(
+    `mutation($e: FulfillmentEventInput!) {
+       fulfillmentEventCreate(fulfillmentEvent: $e) {
+         fulfillmentEvent { id status happenedAt }
+         userErrors { field message }
+       }
+     }`,
+    {
+      e: {
+        fulfillmentId,
+        status,
+        ...(happenedAt ? { happenedAt } : {}),
+        ...(message ? { message: message.slice(0, 240) } : {}),
+        ...(estimatedDeliveryAt ? { estimatedDeliveryAt } : {}),
+      },
+    }
+  );
+  return assertNoUserErrors(data.fulfillmentEventCreate, 'fulfillmentEventCreate').fulfillmentEvent;
+}
+
+/**
+ * Riscrive l'URL di tracking verso la nostra pagina.
+ *
+ * `notifyCustomer: false` è obbligatorio: l'app non deve generare
+ * comunicazioni al cliente. L'input sostituisce l'intero blocco tracking,
+ * quindi company e numbers vanno rispediti invariati.
+ */
+export async function rewriteTrackingUrl(order, fulfillment) {
+  const infos = fulfillment.trackingInfo.filter((t) => t.number);
+  if (!infos.length) return { skipped: 'nessun codice spedizione' };
+
+  const target = trackingPageUrl(order.id);
+  const alreadyOk = infos.every((t) => t.url === target);
+  if (alreadyOk) return { skipped: 'URL già corretto' };
+
+  const company = infos.find((t) => t.company)?.company || null;
+
+  const data = await gql(
+    `mutation($id: ID!, $info: FulfillmentTrackingInput!, $notify: Boolean) {
+       fulfillmentTrackingInfoUpdate(fulfillmentId: $id, trackingInfoInput: $info, notifyCustomer: $notify) {
+         fulfillment { id trackingInfo { company number url } }
+         userErrors { field message }
+       }
+     }`,
+    {
+      id: fulfillment.id,
+      notify: false,
+      info: {
+        ...(company ? { company } : {}),
+        numbers: infos.map((t) => t.number),
+        urls: infos.map(() => target),
+      },
+    }
+  );
+  return assertNoUserErrors(data.fulfillmentTrackingInfoUpdate, 'fulfillmentTrackingInfoUpdate');
+}
+
+export async function addOrderTags(orderGid, tags) {
+  if (!tags.length) return null;
+  const data = await gql(
+    `mutation($id: ID!, $tags: [String!]!) {
+       tagsAdd(id: $id, tags: $tags) { userErrors { field message } }
+     }`,
+    { id: orderGid, tags }
+  );
+  return assertNoUserErrors(data.tagsAdd, 'tagsAdd');
+}
+
+/**
+ * Tag `consegnato`, applicato solo quando:
+ *  - l'ordine è completamente evaso;
+ *  - tutte le spedizioni attive risultano consegnate.
+ */
+export async function maybeTagDelivered(order) {
+  if (order.displayFulfillmentStatus !== 'FULFILLED') return { skipped: 'ordine non completamente evaso' };
+  const active = order.fulfillments.filter((f) => f.status !== 'CANCELLED');
+  if (!active.length) return { skipped: 'nessuna spedizione attiva' };
+  if (!active.every((f) => f.displayStatus === 'DELIVERED')) return { skipped: 'non tutte le spedizioni consegnate' };
+  if (order.tags.includes(APP_TAGS.DELIVERED)) return { skipped: 'tag già presente' };
+  await addOrderTags(order.id, [APP_TAGS.DELIVERED]);
+  return { tagged: true };
+}
+
+/* ------------------------------------------------------------------ *
+ * Proiezione pubblica per la pagina tracking
+ * ------------------------------------------------------------------ */
+
+export function trackingPageUrl(orderGid) {
+  const base = process.env.TRACKING_PAGE_URL; // es. https://www.check-point-store.it/pages/tracking-area
+
+  // Senza guardia, una variabile mancante produrrebbe "undefined?o=..." e lo
+  // scriverebbe come link di tracking su ordini reali, in silenzio.
+  if (!/^https:\/\/.+/.test(base || '')) {
+    throw new Error(
+      'TRACKING_PAGE_URL mancante o non valido. ' +
+      'Atteso un URL https, es. https://www.check-point-store.it/pages/tracking-area'
+    );
+  }
+
+  const id = numericId(orderGid);
+  return `${base.replace(/\?.*$/, '').replace(/\/$/, '')}?o=${id}&t=${makeToken(id)}`;
+}
+
+/**
+ * Riduce l'ordine a ciò che la pagina può mostrare.
+ * Nessun dato personale: niente nome, indirizzo, email, importi o prodotti.
+ */
+export function toPublicShape(order) {
+  const parcels = order.fulfillments
+    .filter((f) => f.status !== 'CANCELLED')
+    .filter((f) => f.trackingInfo.some((t) => t.number))
+    .map((f) => {
+      const info = f.trackingInfo.find((t) => t.number) || {};
+      const last = f.events?.nodes?.[0] || null;
+      const status = f.displayStatus === 'DELIVERED' ? 'DELIVERED' : last?.status || 'NONE';
+      const p = present(status);
+      return {
+        status,
+        phase: p.phase,
+        step: p.step,
+        tone: p.tone,
+        title: p.parcelTitle || p.title,
+        sub: p.sub,
+        pill: p.pill,
+        number: info.number,
+        carrier: info.company || null,
+        carrierUrl: p.phase === 2 ? carrierUrl(info.company, info.number) : null,
+        happenedAt: last?.happenedAt || null,
+      };
+    });
+
+  // Nessuna spedizione tracciabile ancora: l'ordine è in lavorazione.
+  if (!parcels.length) {
+    const p = present('NONE');
+    parcels.push({
+      status: 'NONE', phase: 1, step: 0, tone: 'idle',
+      title: p.title, sub: p.sub, pill: p.pill,
+      number: null, carrier: null, carrierUrl: null, happenedAt: null,
+    });
+  }
+
+  const allDelivered = parcels.every((x) => x.status === 'DELIVERED');
+  const anyProcessing = parcels.some((x) => x.phase === 1);
+
+  // La data prevista vive solo in fase 1, solo se non è ancora passata
+  // e solo se l'ordine non è in `alert`.
+  const etaDate = parseEtaTag(order.tags);
+  const blockedByAlert = HIDE_ETA_ON_ALERT && hasAlert(order.tags);
+  const showEta = anyProcessing && etaDate && etaIsStillRelevant(etaDate) && !blockedByAlert;
+
+  // stripTags: garanzia esplicita che nessun tag ordine raggiunga il browser.
+  // codice_soc, soc_atleta, soc_nome e soc_categoria contengono dati di
+  // persone e società e non devono uscire da un link condivisibile.
+  return stripTags({
+    order: order.name,
+    allDelivered,
+    parcels,
+    eta: showEta ? formatEtaLabel(etaDate) : null,
+    tags: undefined,
+  });
+}
