@@ -22,6 +22,8 @@
     "audit:veloce": "node scripts/audit-consegnati.mjs --solo-shopify",
     "ripara-consegnati": "node scripts/ripara-consegnati.mjs",
     "ripara-consegnati:apply": "node scripts/ripara-consegnati.mjs --apply",
+    "riconcilia": "node scripts/riconcilia.mjs",
+    "riconcilia:apply": "node scripts/riconcilia.mjs --apply",
     "backfill": "node scripts/backfill.mjs",
     "backfill:apply": "node scripts/backfill.mjs --apply",
     "ripara": "node scripts/ripara.mjs",

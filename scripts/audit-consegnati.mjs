@@ -282,9 +282,20 @@ for (const r of righe) {
 
   const sospettoA = r.massiva === 'si' && Number(r.eventiConMessaggio) === 0;
 
-  if (SOLO_SHOPIFY || !r.spEventiReali) {
+  // Il livello A riconosce che una consegna l'ha scritta uno script, NON che sia
+  // sbagliata. Il backfill del 27/08 ne ha scritte 563 e ShippyPro ne ha poi
+  // confermate 557: senza il livello B, chiamarle tutte "SOSPETTO" e' un falso
+  // allarme di massa che seppellisce i casi veri.
+  if (SOLO_SHOPIFY) {
     r.verdetto = sospettoA
-      ? 'SOSPETTO: consegna scritta in blocco, nessun evento del vettore su Shopify'
+      ? 'da verificare: scritta in blocco, serve il livello B (ShippyPro)'
+      : 'ok';
+    continue;
+  }
+
+  if (!r.spEventiReali) {
+    r.verdetto = sospettoA
+      ? 'SOSPETTO: consegna scritta in blocco, nessun evento del vettore'
       : (r.massiva === 'si' ? 'scritta in blocco, ma il collo aveva eventi reali' : 'ok');
     continue;
   }
@@ -317,16 +328,38 @@ fs.writeFileSync(
 
 const per = (pred) => righe.filter(pred).length;
 
+const mute = righe.filter((r) => !r.ultimoStato);
+const muteVecchie = mute.filter((r) => {
+  const g = (Date.now() - new Date(r.creato).getTime()) / 864e5;
+  return g > 14;
+});
+
 console.log('Riepilogo');
 console.log('─────────');
 console.log(`  Spedizioni consegnate esaminate : ${per((r) => r.statoShopify === 'DELIVERED')}`);
 console.log(`  Scritte in blocco da script     : ${per((r) => r.massiva === 'si')}`);
+console.log(`  Con codice e ZERO eventi        : ${mute.length}  (di cui ${muteVecchie.length} con ordine di oltre 14 giorni)`);
 console.log(`  SOSPETTE                        : ${per((r) => r.verdetto.startsWith('SOSPETTO'))}`);
 console.log(`  Incoerenti con ShippyPro        : ${per((r) => r.verdetto.startsWith('INCOERENTE'))}`);
 console.log(`  Da verificare (ShippyPro muto)  : ${per((r) => r.verdetto.startsWith('da verificare'))}`);
 console.log(`  Confermate                      : ${per((r) => r.verdetto.startsWith('ok'))}`);
 console.log(`\nReport: ${OUT}`);
 console.log('Nessuna scrittura effettuata.\n');
+
+if (SOLO_SHOPIFY) {
+  console.log('\nLivello B non eseguito: nessun verdetto definitivo sulle consegne.');
+  console.log('Per sapere quali sono davvero false serve `npm run audit` (con ShippyPro).\n');
+}
+
+if (muteVecchie.length) {
+  console.log(`Silenzio del vettore oltre i 14 giorni — ${muteVecchie.length} spedizioni:`);
+  console.log('Il magazzino spiega il silenzio nei primi giorni, non dopo due settimane.');
+  for (const r of muteVecchie.slice(0, 40)) {
+    console.log(`  ${r.ordine.padEnd(12)} ${r.tracking.padEnd(24)} ${r.corriere.padEnd(16)} ordine del ${r.creato.slice(0, 10)}`);
+  }
+  if (muteVecchie.length > 40) console.log(`  ... e altre ${muteVecchie.length - 40}, tutte nel CSV`);
+  console.log('');
+}
 
 const sospette = righe.filter((r) => r.verdetto.startsWith('SOSPETTO'));
 if (sospette.length) {
