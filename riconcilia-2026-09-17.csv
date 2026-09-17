@@ -117,8 +117,7 @@ ordine,tracking,corriere,statoShopify,statoShippyPro,scritto,quando,fonteData,ta
 26CKPT3019,3UW1JRZ000079,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT3018,3UW1JRZ000151,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT3017,3UW1JS2039203,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
-26CKPT3016,3UW1JRZ000149,Poste Italiane,OUT_FOR_DELIVERY,DELIVERED,DELIVERED,2026-09-15T09:58:00.000Z,data reale del vettore,,allineato
-26CKPT3016,,,,,,,,tag consegnato aggiunto,tag aggiornato
+26CKPT3016,3UW1JRZ000149,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT3015,3UW1JRZ000199,Poste Italiane,(nessun evento),(muto),,,,,nessun dato ShippyPro — lasciato invariato
 26CKPT3014,3UW1JRZ000147,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT3013,3UW1JRZ000091,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
@@ -247,8 +246,7 @@ ordine,tracking,corriere,statoShopify,statoShippyPro,scritto,quando,fonteData,ta
 26CKPT2885,3UW1JS2038280,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2884,3UW1JS2038504,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2883,3UW1JS2038502,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
-26CKPT2882,3UW1JS2038754,Poste Italiane,(nessun evento),DELIVERED,DELIVERED,2026-09-15T10:01:00.000Z,data reale del vettore,,allineato
-26CKPT2882,,,,,,,,tag consegnato aggiunto,tag aggiornato
+26CKPT2882,3UW1JS2038754,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2881,3UW1JS2038752,Poste Italiane,(nessun evento),(muto),,,,,nessun dato ShippyPro — lasciato invariato
 26CKPT2880,3UW1JS2038500,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2879,3UW1JS2038750,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
@@ -489,7 +487,8 @@ ordine,tracking,corriere,statoShopify,statoShippyPro,scritto,quando,fonteData,ta
 26CKPT2648,3UW1JS2037350,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2647,3UW1JS2037348,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2646,3UW1JS2037168,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
-26CKPT2645,3UW1JS2037703,Poste Italiane,(nessun evento),(muto),,,,,nessun dato ShippyPro — lasciato invariato
+26CKPT2645,3UW1JS2037703,Poste Italiane,DELIVERED,(muto),,,,,nessun dato ShippyPro — consegna su Shopify non verificabile
+26CKPT2645,3UW1JS2037703,Poste Italiane,DELIVERED,(muto),,,,,nessun dato ShippyPro — consegna su Shopify non verificabile
 26CKPT2644,3UW1JS2037166,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2643,3UW1JS2037164,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2642,3UW1JS2037330,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
@@ -850,8 +849,7 @@ ordine,tracking,corriere,statoShopify,statoShippyPro,scritto,quando,fonteData,ta
 26CKPT2353,3UW1JS2035333,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2352,3UW1JS2035537,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2352,3UW1JS2035537,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
-26CKPT2351,3UW1JS2035535,Poste Italiane,CONFIRMED,DELIVERED,DELIVERED,2026-09-15T12:03:00.000Z,data reale del vettore,,allineato
-26CKPT2351,,,,,,,,tag consegnato aggiunto,tag aggiornato
+26CKPT2351,3UW1JS2035535,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2350,3UW1JS2035293,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2349,3UW1JS2035291,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente
 26CKPT2348,3UW1JS2035289,Poste Italiane,DELIVERED,DELIVERED,,,,,nessuna azione: stato identico al precedente

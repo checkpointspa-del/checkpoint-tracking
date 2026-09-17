@@ -6,6 +6,7 @@
  *   node scripts/riallinea-tag.mjs --apply --max 1    # PROVA su un solo ordine
  *   node scripts/riallinea-tag.mjs --apply            # applica a tutti
  *   node scripts/riallinea-tag.mjs --dal 2026-07-24   # data di inizio (default day 1)
+ *   node scripts/riallinea-tag.mjs --anche-rimozioni  # toglie il tag dove non e' piu' dovuto
  *   node scripts/riallinea-tag.mjs --rispetta-senza-tracking
  *       Comportamento prudente: un fulfillment senza codice tiene aperto l'ordine.
  *       NON è la regola Checkpoint, serve solo a isolare i casi anomali.
@@ -37,7 +38,7 @@
 import fs from 'node:fs';
 import '../lib/env.js';
 import { gql } from '../lib/shopify.js';
-import { valutaConsegnato, addOrderTags } from '../lib/orders.js';
+import { valutaConsegnato, addOrderTags, consegnata } from '../lib/orders.js';
 import { APP_TAGS } from '../lib/tags.js';
 
 const APPLY = process.argv.includes('--apply');
@@ -47,6 +48,7 @@ const DAL = argValue('--dal') || '2026-07-24';
    è un'evasione parziale fatta per errore e poi chiusa: la merce viaggia con il
    primo tracking dell'ordine. Vedi lib/orders.js. */
 const IGNORA_SENZA_TRACKING = !process.argv.includes('--rispetta-senza-tracking');
+const ANCHE_RIMOZIONI = process.argv.includes('--anche-rimozioni');
 const OUT = `riallinea-tag-${new Date().toISOString().slice(0, 10)}.csv`;
 
 function argValue(flag) {
@@ -63,6 +65,7 @@ const QUERY = `
         fulfillments(first: 10) {
           id status displayStatus
           trackingInfo { number }
+          events(first: 1, sortKey: HAPPENED_AT, reverse: true) { nodes { status } }
         }
       }
     }
@@ -144,6 +147,68 @@ for (const o of tuttiGliOrdini) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Seconda fase: togliere il tag dove non e' piu' dovuto.
+ *
+ * La prima fase filtra su `tag_not:consegnato`, quindi puo' solo aggiungere.
+ * Ma un tag puo' diventare sbagliato: una consegna falsa corretta da
+ * `ripara-consegnati` o da `riconcilia` lascia l'ordine taggato con una
+ * spedizione che non e' piu' DELIVERED. Senza questa fase il tag resta li'
+ * e l'ordine sparisce dalle viste operative pur non essendo consegnato.
+ * ------------------------------------------------------------------ */
+
+let rimossi = 0, daRimuovere = 0;
+
+if (ANCHE_RIMOZIONI) {
+  console.log('\nSeconda fase — ordini gia\' taggati, verifica che il tag sia ancora dovuto.\n');
+
+  const qTaggati = `created_at:>=${DAL} AND NOT status:cancelled AND tag:${APP_TAGS.DELIVERED}`;
+  const taggatiOrdini = [];
+  let cursor2 = null;
+  do {
+    const data = await gql(QUERY, { q: qTaggati, cursor: cursor2 });
+    taggatiOrdini.push(...data.orders.nodes);
+    cursor2 = data.orders.pageInfo.hasNextPage ? data.orders.pageInfo.endCursor : null;
+  } while (cursor2);
+
+  console.log(`Ordini taggati nel perimetro: ${taggatiOrdini.length}\n`);
+
+  for (const o of taggatiOrdini) {
+    const attive = o.fulfillments.filter((f) => f.status !== 'CANCELLED');
+    const tracciate = attive.filter((f) => (f.trackingInfo || []).some((t) => t.number));
+    const consegnate = tracciate.filter(consegnata);
+
+    // Il tag resta dovuto se tutte le spedizioni tracciate risultano consegnate.
+    const ancoraDovuto = tracciate.length > 0 && consegnate.length === tracciate.length;
+    if (ancoraDovuto) continue;
+
+    daRimuovere++;
+    const motivo = tracciate.length === 0
+      ? 'nessuna spedizione tracciata'
+      : `${tracciate.length - consegnate.length} spedizioni non consegnate`;
+
+    rows.push([o.name, o.createdAt.slice(0, 10), o.displayFulfillmentStatus,
+               attive.length, tracciate.length, consegnate.length,
+               APPLY ? 'tag rimosso' : 'da rimuovere', motivo]);
+
+    if (!APPLY) continue;
+    try {
+      await gql(
+        `mutation($id: ID!, $tags: [String!]!) {
+           tagsRemove(id: $id, tags: $tags) { userErrors { field message } }
+         }`,
+        { id: o.id, tags: [APP_TAGS.DELIVERED] }
+      );
+      rimossi++;
+      console.log(`  - ${o.name} — tag rimosso (${motivo})`);
+    } catch (err) {
+      errori++;
+      console.error(`  x ${o.name}: ${err.message}`);
+      rows[rows.length - 1][6] = `errore: ${err.message}`;
+    }
+  }
+}
+
 const csv = (v) => {
   const s = String(v ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -158,6 +223,9 @@ console.log(
 );
 console.log(`Da taggare:        ${daTaggare}   <- uscirebbero dalle viste operative`);
 console.log(`Taggati:           ${taggati}`);
+if (ANCHE_RIMOZIONI) {
+  console.log(`${APPLY ? 'Tag rimossi' : 'Da rimuovere'}:       ${APPLY ? rimossi : daRimuovere}   <- tag non piu' dovuti`);
+}
 console.log(`Errori:            ${errori}`);
 console.log(`\nPerché gli altri restano aperti:`);
 for (const [m, n] of [...motivi.entries()].sort((a, b) => b[1] - a[1])) {

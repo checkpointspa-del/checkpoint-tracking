@@ -4,10 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Sincronizzazione stato spedizione ShippyPro -> Shopify + pagina tracking cliente",
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "scripts": {
+    "settimanale": "npm run riconcilia:apply && npm run riallinea-tag:completo",
     "test:permessi": "node scripts/test-permessi.mjs",
     "test:tag": "node scripts/test-tags.mjs",
     "test:env": "node scripts/test-env.mjs",
@@ -27,12 +26,12 @@
     "imposta-stato:apply": "node scripts/imposta-stato.mjs --apply",
     "ripara-consegnati": "node scripts/ripara-consegnati.mjs",
     "ripara-consegnati:apply": "node scripts/ripara-consegnati.mjs --apply",
+    "riallinea-tag": "node scripts/riallinea-tag.mjs --anche-rimozioni",
+    "riallinea-tag:completo": "node scripts/riallinea-tag.mjs --anche-rimozioni --apply",
     "backfill": "node scripts/backfill.mjs",
     "backfill:apply": "node scripts/backfill.mjs --apply",
     "ripara": "node scripts/ripara.mjs",
     "ripara:apply": "node scripts/ripara.mjs --apply",
-    "riallinea-tag": "node scripts/riallinea-tag.mjs",
-    "riallinea-tag:apply": "node scripts/riallinea-tag.mjs --apply",
     "snapshot": "node scripts/snapshot.mjs",
     "snapshot:apply": "node scripts/snapshot.mjs --apply",
     "data-prevista": "node scripts/data-prevista.mjs",
