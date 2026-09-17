@@ -7,13 +7,17 @@ node_modules
 .env.*.local
 
 # Report operativi prodotti dagli script: dati di esercizio, non codice.
-backfill-*.csv
-ripara-*.csv
-riallinea-tag-*.csv
-snapshot-*.csv
-data-prevista-*.csv
 audit-consegnati-*.csv
+backfill-*.csv
 consegnati-sospetti-*.csv
+da-riparare-*.csv
+data-prevista-*.csv
+imposta-stato-*.csv
+ldv-mute-*.csv
+riallinea-tag-*.csv
+riconcilia-*.csv
+ripara-*.csv
+snapshot-*.csv
 
 # Materiale di lavoro che non appartiene al repository.
 _to_delete/
