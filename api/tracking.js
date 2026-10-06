@@ -48,7 +48,10 @@ export default createHandler(async (ctx) => {
 
   try {
     const order = await getOrderById(orderId);
-    if (!order) return json({ error: 'not found' }, 404, cors());
+    // Token valido ma ordine illeggibile: l'id l'abbiamo emesso noi, quindi l'ordine esiste.
+    // La Admin API non espone gli ordini oltre i 60 giorni (manca read_all_orders): 410,
+    // cosi' la pagina non dice "non trovata" a chi ha un link corretto.
+    if (!order) return json({ error: 'too old' }, 410, cors());
 
     // Cache breve lato edge: protegge il rate limit Admin API sui refresh ripetuti.
     return json(toPublicShape(order), 200, {
