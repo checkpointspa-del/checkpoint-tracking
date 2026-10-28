@@ -14,6 +14,15 @@ import { getOrderById, toPublicShape } from '../lib/orders.js';
 
 const ALLOWED_ORIGIN = process.env.STOREFRONT_ORIGIN || 'https://www.check-point-store.it';
 
+/**
+ * Ultima risposta buona per ordine, in memoria. Se Shopify non risponde si
+ * serve questa, invece di mostrare al cliente un errore: meglio l'ultimo stato
+ * noto che "Servizio non disponibile". Non e' persistenza: sopravvive solo
+ * all'istanza calda, e va bene cosi'.
+ */
+const ULTIMA_BUONA = new Map();
+const MAX_ULTIME = 500;
+
 const cors = () => ({
   'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
   Vary: 'Origin',
@@ -54,12 +63,21 @@ export default createHandler(async (ctx) => {
     if (!order) return json({ error: 'too old' }, 410, cors());
 
     // Cache breve lato edge: protegge il rate limit Admin API sui refresh ripetuti.
-    return json(toPublicShape(order), 200, {
+    const shape = toPublicShape(order);
+    if (ULTIMA_BUONA.size >= MAX_ULTIME) ULTIMA_BUONA.delete(ULTIMA_BUONA.keys().next().value);
+    ULTIMA_BUONA.set(orderId, shape);
+
+    return json(shape, 200, {
       ...cors(),
-      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+      // stale-if-error: se Shopify e' giu', l'edge continua a servire l'ultima risposta buona.
+      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120, stale-if-error=86400',
     });
   } catch (err) {
     console.error('[tracking] errore', err.message);
+    const ultima = ULTIMA_BUONA.get(orderId);
+    if (ultima) {
+      return json(ultima, 200, { ...cors(), 'Cache-Control': 'no-store', 'X-Checkpoint-Stale': '1' });
+    }
     return json({ error: 'temporarily unavailable' }, 503, cors());
   }
 });
